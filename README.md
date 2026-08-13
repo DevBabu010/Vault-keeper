@@ -8,6 +8,7 @@ Vault Keeper is a modern password vault built with **React Native and Expo** via
 > **Private by design. Secure by default. Simple to use.**
 
 ---
+<img src="ss/1.jpg" alt="Main Page" title="Main Page">
 
 ## ✨ Features
 
