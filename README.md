@@ -8,7 +8,36 @@ Vault Keeper is a modern password vault built with **React Native and Expo** via
 > **Private by design. Secure by default. Simple to use.**
 
 ---
-<img src="ss/1.jpg" alt="Main Page" title="Main Page">
+<table>
+  <tr>
+    <td align="center">
+      <img src="ss/1.jpg" width="200">
+      <br>
+      <b>1. Vault Keeper Home Screen</b>
+    </td>
+    <td align="center">
+      <img src="ss/2.jpg" width="200">
+      <br>
+      <b>2. Add Password Screen</b>
+    </td>
+    <td align="center">
+      <img src="ss/3.jpg" width="200">
+      <br>
+      <b>3. Saved Password List</b>
+    </td>
+    <td align="center">
+      <img src="ss/4.jpg" width="200">
+      <br>
+      <b>4. Password Generator</b>
+    </td>
+    <td align="center">
+      <img src="ss/5.jpg" width="200">
+      <br>
+      <b>5. Settings</b>
+    </td>
+  </tr>
+</table>
+
 
 ## ✨ Features
 
