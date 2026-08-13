@@ -1,0 +1,56 @@
+{
+  "expo": {
+    "name": "Vault Keeper",
+    "slug": "vault",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon_2.png",
+    "scheme": "vault-keeper",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/images/icon_2.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#071014"
+    },
+    "ios": {
+      "supportsTablet": false
+    },
+    "android": {
+      "permissions": [
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT"
+      ],
+      "package": "com.devbabu.vaultkeeper"
+    },
+    "web": {
+      "favicon": "./assets/images/icon_2.png"
+    },
+    "plugins": [
+      [
+        "expo-router",
+        {
+          "origin": "https://replit.com/"
+        }
+      ],
+      "expo-font",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Allow Vault Keeper to use Face ID to unlock your local vault."
+        }
+      ],
+      "expo-web-browser"
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "28a02958-1c45-4d65-a0f5-ab9c8dcc28f9"
+      }
+    },
+    "owner": "devpbabus-team"
+  }
+}

@@ -1,0 +1,242 @@
+11. BIOMETRIC UNLOCK
+
+Add optional fingerprint/face unlock.
+
+Use the platform's official biometric authentication API.
+
+Settings should contain:
+
+Biometric Unlock
+ON/OFF
+
+Do not store biometric data inside the app.
+
+The operating system should handle biometric verification.
+
+12. AUTO LOCK
+
+Implement automatic vault locking.
+
+Settings:
+
+Immediately
+1 minute
+5 minutes
+15 minutes
+30 minutes
+
+Also provide:
+
+Lock Vault Now
+
+When the vault locks, sensitive information should no longer be accessible without authentication.
+
+13. SECURE STORAGE
+
+This is extremely important.
+
+The application is a password manager, so do NOT use insecure plaintext storage.
+
+Use the Android platform's secure cryptographic facilities.
+
+Requirements:
+
+Use Android Keystore where appropriate.
+Use authenticated encryption such as AES-GCM for sensitive vault data.
+Generate cryptographically secure random IVs/nonces.
+Never hard-code encryption keys.
+Never store the master password in plaintext.
+Never store passwords in plaintext files.
+Never put passwords in logs.
+Never send passwords to an external server.
+Do not use Base64 as a replacement for encryption.
+Do not implement homemade cryptography.
+
+If the chosen mobile framework has a secure-storage API, use the platform-supported secure storage mechanism appropriately.
+
+Keep encryption/key-management code separate from UI code.
+
+14. SETTINGS
+
+Create a premium glassmorphism Settings screen.
+
+SECURITY
+
+🔐 Change Master Password
+
+👆 Biometric Unlock
+
+⏱ Auto Lock
+
+🔒 Lock Vault
+
+PASSWORD GENERATOR
+
+Password Length
+
+Uppercase
+
+Lowercase
+
+Numbers
+
+Symbols
+
+APPEARANCE
+
+Dark Mode
+
+Light Mode
+
+System Default
+
+ABOUT
+
+Vault Keeper
+
+Version
+
+Privacy & Security
+
+15. NAVIGATION
+
+Use a modern glassmorphism bottom navigation bar.
+
+Three main sections:
+
+🔐 Vault
+
+⚡ Generator
+
+⚙ Settings
+
+The active section should use the neon green accent and subtle glow.
+
+16. EMPTY VAULT
+
+When there are no saved passwords, show a beautiful empty state.
+
+Centered glass card:
+
+🔐
+
+Your vault is empty
+
+"Add your first password to start protecting your accounts."
+
+Button:
+
++ ADD PASSWORD
+
+17. SECURITY AND PRIVACY
+
+This application must be completely local-first.
+
+Do NOT implement:
+
+Cloud synchronization
+User accounts
+PostgreSQL
+Express backend
+Firebase
+Analytics
+Advertising
+Tracking
+Password uploads
+Remote password checking
+
+Avoid requesting unnecessary Android permissions.
+
+If internet access is not required, do not request INTERNET permission.
+
+18. UI DETAILS
+
+Use:
+
+Large rounded cards
+18-24px corner radius
+Subtle translucent borders
+Glass blur where supported
+Soft shadows
+Neon green glow
+Dark navy background
+Smooth transitions
+Touch feedback
+Consistent spacing
+Modern typography
+
+Avoid:
+
+Bright white backgrounds
+Excessive neon
+Clutter
+Excessive animations
+Tiny buttons
+Generic default Android-looking screens
+
+The reference image's large centered glass card, dark background, green glow and rounded controls should inspire the overall visual identity.
+
+However, this should clearly look like a password manager, not a copy of the reference app.
+
+19. DATA MODEL
+
+Each password entry should contain approximately:
+
+id
+name
+username
+encrypted password
+encrypted URL if necessary
+encrypted notes if necessary
+category
+createdAt
+updatedAt
+
+Use secure handling for all sensitive fields.
+
+20. IMPORTANT DEVELOPMENT STRATEGY
+
+Build the application in this order:
+
+Project setup
+Dark Neon Glassmorphism theme
+First-launch master password setup
+Lock/unlock screen
+Vault screen
+Add/edit/delete password entries
+Secure local storage
+Password generator
+Search
+Clipboard protection
+Auto-lock
+Biometric unlock
+Settings
+Final UI polish
+
+Do not spend excessive time implementing advanced features before the basic app is working.
+
+After each major feature, make sure the project still builds.
+
+21. FINAL REQUIREMENT
+
+At the end, provide a working Android project that can be built into an APK.
+
+Before finishing, verify:
+
+The app launches.
+Master password setup works.
+Vault locking works.
+Password entries can be added.
+Password entries can be edited.
+Password entries can be deleted.
+Passwords are masked by default.
+Password generation works.
+Search works.
+Auto-lock works.
+Biometric authentication works where supported.
+Sensitive credentials are not stored in plaintext.
+No passwords are printed to logs.
+No unnecessary network/backend functionality exists.
+The Dark Neon Glassmorphism UI is applied consistently across all screens.
+
+Prioritize a working, attractive MVP with secure local storage rather than adding unnecessary advanced features.
