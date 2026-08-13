@@ -3,7 +3,7 @@
 **A privacy-focused, local-first password manager for Android.**
 > This app helps to keep your passwords secure from google password manager as i don't trust Gooooogle.
 
-Vault Keeper is a modern password vault built with **React Native and Expo**, designed to store credentials securely on the user's device without relying on a cloud backend.
+Vault Keeper is a modern password vault built with **React Native and Expo** via Replit, designed to store credentials securely on the user's device without relying on a cloud backend.
 
 > **Private by design. Secure by default. Simple to use.**
 
