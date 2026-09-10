@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "520f3be2-b805-4e6b-b66d-ab6cf7e7c894"
+      }
+    },
+    "android": {
+      "package": "com.devbabu.vaultkeeper"
+    }
+  }
+}

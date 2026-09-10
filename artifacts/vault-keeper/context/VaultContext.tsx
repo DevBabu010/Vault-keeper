@@ -4,9 +4,10 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import * as LocalAuthentication from 'expo-local-authentication';
 import {
   AutoLockOption,
@@ -22,6 +23,7 @@ import {
   VaultEntry,
   VaultSettings,
 } from '@/lib/vault';
+import { BackupPayload } from '@/lib/backup';
 
 type EntryInput = Omit<VaultEntry, 'id' | 'createdAt' | 'updatedAt'>;
 
@@ -32,6 +34,8 @@ type VaultContextValue = {
   entries: VaultEntry[];
   settings: VaultSettings;
   biometricAvailable: boolean;
+  appIsActive: boolean;
+  setDocumentPickerLockSuppressed: (suppressed: boolean) => void;
   error: string | null;
   setup: (password: string) => Promise<void>;
   unlock: (password: string) => Promise<boolean>;
@@ -45,10 +49,22 @@ type VaultContextValue = {
     currentPassword: string,
     nextPassword: string,
   ) => Promise<boolean>;
+  restoreBackup: (
+    payload: BackupPayload,
+    mode: 'replace' | 'merge',
+  ) => Promise<number>;
   clearError: () => void;
 };
 
 const VaultContext = createContext<VaultContextValue | null>(null);
+
+function biometricDebug(...values: unknown[]): void {
+  if (__DEV__) console.log(...values);
+}
+
+function restoreDebug(...values: unknown[]): void {
+  if (__DEV__) console.log(...values);
+}
 
 export function VaultProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
@@ -57,18 +73,34 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
   const [entries, setEntries] = useState<VaultEntry[]>([]);
   const [settings, setSettings] = useState<VaultSettings>(defaultSettings);
   const [biometricAvailable, setBiometricAvailable] = useState(false);
+  const [appIsActive, setAppIsActive] = useState(
+    AppState.currentState !== 'background' && AppState.currentState !== 'inactive',
+  );
   const [error, setError] = useState<string | null>(null);
+  const documentPickerLockSuppressed = useRef(false);
 
   useEffect(() => {
     let mounted = true;
     void (async () => {
       try {
+        biometricDebug('[BIOMETRIC] app launched');
         const metadata = await readMetadata();
+        // Read only the persisted preferences during startup. Entries stay empty
+        // until the user has authenticated.
+        const stored = metadata ? await readVault() : null;
         if (!mounted) return;
         setHasVault(Boolean(metadata));
+        if (!stored) biometricDebug('[BIOMETRIC] preference enabled:', false);
+        if (stored) {
+          setSettings(stored.settings);
+          biometricDebug('[BIOMETRIC] preference enabled:', stored.settings.biometricEnabled);
+          biometricDebug('[BIOMETRIC] vault locked');
+        }
         if (Platform.OS !== 'web') {
           const hardware = await LocalAuthentication.hasHardwareAsync();
+          biometricDebug('[BIOMETRIC] hardware available:', hardware);
           const enrolled = await LocalAuthentication.isEnrolledAsync();
+          biometricDebug('[BIOMETRIC] enrolled:', enrolled);
           if (mounted) setBiometricAvailable(hardware && enrolled);
         }
       } catch {
@@ -81,6 +113,36 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
       mounted = false;
     };
   }, []);
+
+  const lock = useCallback(() => {
+    setEntries([]);
+    setUnlocked((wasUnlocked) => {
+      if (wasUnlocked) biometricDebug('[BIOMETRIC] vault locked');
+      return false;
+    });
+  }, []);
+
+  const setDocumentPickerLockSuppressed = useCallback((suppressed: boolean) => {
+    documentPickerLockSuppressed.current = suppressed;
+    restoreDebug(
+      suppressed
+        ? '[RESTORE] document picker session started'
+        : '[RESTORE] document picker session ended',
+    );
+  }, []);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      const active = nextState === 'active';
+      setAppIsActive(active);
+      if (!active && documentPickerLockSuppressed.current) {
+        restoreDebug('[RESTORE] AppState changed for document picker; lock suppressed');
+        return;
+      }
+      if (!active && settings.autoLock === 'immediate') lock();
+    });
+    return () => subscription.remove();
+  }, [lock, settings.autoLock]);
 
   const setup = useCallback(async (password: string) => {
     const salt = await createSalt();
@@ -112,25 +174,26 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
 
   const biometricUnlock = useCallback(async () => {
     if (!biometricAvailable || Platform.OS === 'web') return false;
+    biometricDebug('[BIOMETRIC] requesting authentication');
     const result = await LocalAuthentication.authenticateAsync({
       promptMessage: 'Unlock your Vault Keeper vault',
       promptDescription: 'Use your device biometric to continue.',
       cancelLabel: 'Use password',
       disableDeviceFallback: false,
     });
-    if (!result.success) return false;
+    if (!result.success) {
+      biometricDebug('[BIOMETRIC] authentication failed');
+      return false;
+    }
+    biometricDebug('[BIOMETRIC] authentication success');
     const stored = await readVault();
     setEntries(stored.entries);
     setSettings(stored.settings);
     setUnlocked(true);
+    biometricDebug('[BIOMETRIC] vault unlocked');
     setError(null);
     return true;
   }, [biometricAvailable]);
-
-  const lock = useCallback(() => {
-    setEntries([]);
-    setUnlocked(false);
-  }, []);
 
   const persist = useCallback(
     async (nextEntries: VaultEntry[], nextSettings: VaultSettings) => {
@@ -199,6 +262,52 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
     [],
   );
 
+  const restoreBackup = useCallback(
+    async (payload: BackupPayload, mode: 'replace' | 'merge') => {
+      restoreDebug(
+        '[RESTORE] restore mode:',
+        mode,
+        'existing entries:',
+        entries.length,
+        'backup entries:',
+        payload.entries.length,
+      );
+      restoreDebug('[RESTORE] authentication state before persistence:', unlocked);
+      const nextSettings: VaultSettings = {
+        ...settings,
+        ...payload.settings,
+        biometricEnabled: payload.settings.biometricEnabled && biometricAvailable,
+      };
+      if (mode === 'replace') {
+        await persist(payload.entries, nextSettings);
+        restoreDebug('[RESTORE] in-memory vault state updated:', payload.entries.length);
+        restoreDebug('[RESTORE] authentication state after persistence:', unlocked);
+        return payload.entries.length;
+      }
+      const existingKeys = new Set(
+        entries.map((entry) =>
+          `${entry.name}|${entry.username}|${entry.url}`.trim().toLowerCase(),
+        ),
+      );
+      const additions = payload.entries.filter((entry) => {
+        const key = `${entry.name}|${entry.username}|${entry.url}`
+          .trim()
+          .toLowerCase();
+        if (existingKeys.has(key)) return false;
+        existingKeys.add(key);
+        return true;
+      });
+      await persist([...entries, ...additions], nextSettings);
+      restoreDebug(
+        '[RESTORE] in-memory vault state updated:',
+        entries.length + additions.length,
+      );
+      restoreDebug('[RESTORE] authentication state after persistence:', unlocked);
+      return additions.length;
+    },
+    [biometricAvailable, entries, persist, settings, unlocked],
+  );
+
   const value = useMemo(
     () => ({
       ready,
@@ -207,6 +316,8 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
       entries,
       settings,
       biometricAvailable,
+      appIsActive,
+      setDocumentPickerLockSuppressed,
       error,
       setup,
       unlock,
@@ -217,6 +328,7 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
       deleteEntry,
       updateSettings,
       changeMasterPassword,
+      restoreBackup,
       clearError: () => setError(null),
     }),
     [
@@ -226,6 +338,8 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
       entries,
       settings,
       biometricAvailable,
+      appIsActive,
+      setDocumentPickerLockSuppressed,
       error,
       setup,
       unlock,
@@ -236,6 +350,7 @@ export function VaultProvider({ children }: { children: React.ReactNode }) {
       deleteEntry,
       updateSettings,
       changeMasterPassword,
+      restoreBackup,
     ],
   );
 

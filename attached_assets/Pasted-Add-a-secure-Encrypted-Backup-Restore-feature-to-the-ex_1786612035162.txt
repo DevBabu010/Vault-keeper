@@ -1,0 +1,240 @@
+Add a secure **Encrypted Backup & Restore** feature to the existing Vault Keeper Android app.
+
+IMPORTANT:
+
+* Do NOT redesign the existing UI.
+* Do NOT remove or break any existing functionality.
+* Do NOT change the existing password vault behavior unnecessarily.
+* Do NOT add a cloud backend or online password synchronization.
+* Keep the application local-first.
+* First inspect the existing implementation and integrate with it instead of recreating the vault.
+
+## 1. Export Encrypted Backup
+
+Add a new option in:
+
+**Settings → Backup & Restore → Export Encrypted Backup**
+
+When the user selects Export:
+
+1. Ask the user to create a dedicated backup password.
+2. Ask them to confirm the backup password.
+3. Explain that this password is required to restore the backup.
+4. Collect the current vault data.
+5. Encrypt the backup completely before writing/exporting it.
+6. Never create a plaintext backup containing passwords.
+7. Let the user save/share the resulting encrypted backup file using the Android system file/share interface.
+
+Use a recognizable file extension such as:
+
+`.vault`
+
+Example:
+
+`VaultKeeper_Backup.vault`
+
+## 2. Backup Encryption
+
+Do NOT use:
+
+* Base64 as encryption
+* Plain JSON export
+* Plain CSV export
+* Hard-coded encryption keys
+* Custom/home-made cryptographic algorithms
+
+Use a modern authenticated encryption design.
+
+Prefer:
+
+* AES-256-GCM for encryption
+* Cryptographically secure random salt
+* Cryptographically secure random IV/nonce
+* A strong password-based key derivation function such as PBKDF2-HMAC-SHA256 with an appropriately strong iteration count, or another secure platform-supported KDF where appropriate
+* Store the salt and required non-secret metadata inside the encrypted backup format
+* Never store the backup password inside the backup
+
+The backup password must be required to decrypt the backup.
+
+The backup encryption key must be derived from the backup password rather than hard-coded.
+
+Use authenticated encryption so tampering with the backup causes restoration to fail safely.
+
+## 3. Backup Format
+
+Create a versioned backup format.
+
+Conceptually:
+
+* Magic/header
+* Format version
+* KDF parameters
+* Random salt
+* Random IV/nonce
+* Ciphertext
+* Authentication tag
+
+The encrypted payload should contain the vault data required to restore the application.
+
+Do not put plaintext passwords in the backup metadata.
+
+Design the format so it can be upgraded in future versions.
+
+## 4. Import / Restore
+
+Add:
+
+**Settings → Backup & Restore → Import Encrypted Backup**
+
+When selected:
+
+1. Open the Android file picker.
+2. Allow the user to select a `.vault` backup.
+3. Validate the file format/version.
+4. Ask for the backup password.
+5. Derive the decryption key.
+6. Verify the authentication tag.
+7. Decrypt the backup only after successful authentication.
+8. Validate the decrypted data structure.
+9. Show a confirmation screen before modifying the existing vault.
+
+If the password is incorrect:
+
+**Incorrect backup password.**
+
+If the file has been modified or corrupted:
+
+**Backup is invalid or corrupted.**
+
+Do not expose cryptographic details to the user.
+
+## 5. Restore Options
+
+Before restoring, show:
+
+**Restore Vault**
+
+"This will restore password entries from this backup."
+
+Provide two choices:
+
+**Replace Existing Vault**
+
+and
+
+**Merge With Existing Vault**
+
+For Replace:
+
+* Replace current vault data with the backup after confirmation.
+
+For Merge:
+
+* Preserve existing entries.
+* Add entries from the backup.
+* Avoid accidental duplicate entries where practical.
+
+Never silently delete existing credentials.
+
+## 6. Backup Security
+
+The backup feature must NOT depend on Android SecureStore surviving an app uninstall.
+
+The purpose is specifically to allow:
+
+1. Export backup.
+2. Uninstall Vault Keeper.
+3. Reinstall Vault Keeper.
+4. Set up the app again.
+5. Choose Restore Backup.
+6. Select the `.vault` file.
+7. Enter the backup password.
+8. Recover the vault.
+
+The backup must remain usable even if the application was completely uninstalled.
+
+## 7. File Handling
+
+Use the platform-supported Android file picker/document APIs available through the current Expo/React Native project.
+
+Do not upload the backup to any server.
+
+The app should only access the file when the user explicitly chooses it.
+
+Do not automatically scan the user's storage.
+
+## 8. UI
+
+Keep the existing **Dark Neon Glassmorphism** design.
+
+Add a new Settings section:
+
+### BACKUP & RESTORE
+
+📤 **Export Encrypted Backup**
+
+Create a secure backup of your vault.
+
+📥 **Import Encrypted Backup**
+
+Restore your vault from an encrypted backup.
+
+Use the existing glass cards, neon green accents, rounded corners, and typography.
+
+Do not redesign the rest of the application.
+
+## 9. Security Requirements
+
+Strictly ensure:
+
+* No plaintext passwords are written to backup files.
+* No plaintext master password is written anywhere.
+* No backup password is logged.
+* No decrypted vault data is logged.
+* No encryption keys are logged.
+* No passwords appear in notifications.
+* No passwords are sent over the network.
+* No backup data is uploaded to a server.
+* Do not store the backup password after the backup operation.
+* Clear sensitive temporary data from memory where practical.
+
+## 10. Testing
+
+Add tests for:
+
+* Successful backup encryption/decryption
+* Wrong backup password
+* Corrupted backup
+* Modified ciphertext
+* Invalid backup format
+* Empty vault backup
+* Large vault backup
+* Restore after fresh app installation
+* Replace restore
+* Merge restore
+
+Most importantly, verify:
+
+**Export → uninstall app → reinstall → restore → all vault entries recovered.**
+
+## 11. APK Size
+
+While implementing this feature, do NOT add unnecessary dependencies.
+
+Use libraries already present in the project whenever possible.
+
+Do not add large libraries solely for backup functionality.
+
+## 12. Final Verification
+
+After implementation:
+
+1. Run the existing project.
+2. Verify all current features still work.
+3. Test Export Encrypted Backup.
+4. Delete/uninstall the app.
+5. Reinstall it.
+6. Restore the `.vault` file.
+7. Verify that passwords, usernames, URLs, notes, categories, and other vault information are correctly restored.
+
+Do not change the existing visual design except for adding the Backup & Restore settings section.

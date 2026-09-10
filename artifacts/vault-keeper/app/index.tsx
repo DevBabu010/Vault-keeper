@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
-  AppState,
   FlatList,
   Modal,
   Platform,
@@ -17,12 +16,22 @@ import { StatusBar } from 'expo-status-bar';
 import { BlurView } from 'expo-blur';
 import * as Clipboard from 'expo-clipboard';
 import * as Crypto from 'expo-crypto';
+import * as DocumentPicker from 'expo-document-picker';
+import { File, Paths } from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
+import { utf8ToBytes } from '@noble/hashes/utils';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { useColors } from '@/hooks/useColors';
 import { AutoLockOption, Category, VaultEntry, VaultSettings } from '@/lib/vault';
+import {
+  BackupError,
+  BackupPayload,
+  createEncryptedBackup,
+  decryptEncryptedBackup,
+} from '@/lib/backup';
 import { useVault } from '@/context/VaultContext';
 
 type IconName = keyof typeof Feather.glyphMap;
@@ -37,6 +46,10 @@ const categories: Category[] = [
   'Shopping',
   'Other',
 ];
+
+function backupDebug(...values: unknown[]): void {
+  if (__DEV__) console.log(...values);
+}
 
 const autoLockOptions: { value: AutoLockOption; label: string }[] = [
   { value: 'immediate', label: 'Immediately' },
@@ -263,9 +276,22 @@ function SetupScreen() {
 function LockScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { unlock, biometricUnlock, biometricAvailable, error, clearError, settings } = useVault();
+  const { unlock, biometricUnlock, biometricAvailable, appIsActive, error, clearError, settings } = useVault();
   const [password, setPassword] = useState('');
   const [show, setShow] = useState(false);
+  const automaticPrompted = useRef(false);
+  useEffect(() => {
+    if (
+      !appIsActive ||
+      !biometricAvailable ||
+      !settings.biometricEnabled ||
+      automaticPrompted.current
+    ) {
+      return;
+    }
+    automaticPrompted.current = true;
+    void biometricUnlock();
+  }, [appIsActive, biometricAvailable, biometricUnlock, settings.biometricEnabled]);
   return (
     <ScreenBackground>
       <KeyboardAwareScrollViewCompat contentContainerStyle={[styles.centerContent, { paddingTop: insets.top + 18, paddingBottom: insets.bottom + 28 }]}>
@@ -450,9 +476,29 @@ function GeneratorScreen({
 function SettingsScreen({ showToast }: { showToast: (message: string) => void }) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { settings, updateSettings, lock, biometricAvailable, changeMasterPassword } = useVault();
+  const {
+    entries,
+    settings,
+    updateSettings,
+    lock,
+    biometricAvailable,
+    changeMasterPassword,
+    restoreBackup,
+    setDocumentPickerLockSuppressed,
+  } = useVault();
   const [showLockOptions, setShowLockOptions] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
+  const [backupModal, setBackupModal] = useState<'export' | 'import' | null>(
+    null,
+  );
+  const [backupPassword, setBackupPassword] = useState('');
+  const [backupConfirm, setBackupConfirm] = useState('');
+  const [backupError, setBackupError] = useState('');
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupData, setBackupData] = useState<string | null>(null);
+  const [pendingBackup, setPendingBackup] = useState<BackupPayload | null>(
+    null,
+  );
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -464,6 +510,182 @@ function SettingsScreen({ showToast }: { showToast: (message: string) => void })
     const changed = await changeMasterPassword(current, next);
     if (!changed) return setPasswordError('Current master password is not correct.');
     setCurrent(''); setNext(''); setConfirm(''); setPasswordError(''); setShowChangePassword(false); showToast('Master password updated');
+  };
+  const resetBackupState = () => {
+    setBackupModal(null);
+    setBackupPassword('');
+    setBackupConfirm('');
+    setBackupError('');
+    setBackupBusy(false);
+    setBackupData(null);
+  };
+  const exportBackup = async () => {
+    backupDebug('[BACKUP] START');
+    if (backupPassword.length < 8) {
+      setBackupError('Use at least 8 characters for the backup password.');
+      return;
+    }
+    if (backupPassword !== backupConfirm) {
+      setBackupError('The backup passwords do not match.');
+      return;
+    }
+    backupDebug('[BACKUP] password validated');
+    setBackupBusy(true);
+    setBackupError('');
+    try {
+      backupDebug('[BACKUP] starting encrypted backup creation');
+      const serialized = await createEncryptedBackup(
+        { entries, settings },
+        backupPassword,
+      );
+      backupDebug('[BACKUP] encrypted backup creation completed');
+      backupDebug('[BACKUP] file creation started');
+      const backupFile = new File(
+        Paths.cache,
+        `VaultKeeper_Backup_${Date.now()}.vault`,
+      );
+      backupFile.create({ intermediates: true, overwrite: true });
+      backupDebug('[BACKUP] file creation completed');
+      const writer = backupFile.writableStream().getWriter();
+      try {
+        backupDebug('[BACKUP] file write started');
+        await writer.write(utf8ToBytes(serialized));
+        backupDebug('[BACKUP] file write completed');
+      } finally {
+        backupDebug('[BACKUP] file close started');
+        await writer.close();
+        backupDebug('[BACKUP] file close completed');
+      }
+      backupDebug('[BACKUP] file exists:', backupFile.exists);
+      backupDebug('[BACKUP] file size:', backupFile.size);
+      if (!backupFile.exists || backupFile.size <= 0) {
+        throw new Error('Backup file was not written.');
+      }
+      backupDebug('[BACKUP] checking sharing');
+      const available = await Sharing.isAvailableAsync();
+      backupDebug('[BACKUP] sharing available:', available);
+      if (!available) {
+        throw new Error('File sharing is unavailable.');
+      }
+      backupDebug('[BACKUP] opening share sheet');
+      await Sharing.shareAsync(backupFile.uri, {
+        dialogTitle: 'Save encrypted Vault Keeper backup',
+        mimeType: 'application/octet-stream',
+        UTI: 'public.data',
+      });
+      backupDebug('[BACKUP] share completed');
+      resetBackupState();
+      showToast('Encrypted backup ready');
+    } catch {
+      backupDebug('[BACKUP] export failed');
+      setBackupError('The encrypted backup could not be created.');
+    } finally {
+      backupDebug('[BACKUP] export handler finished');
+      setBackupBusy(false);
+    }
+  };
+  const chooseBackup = async () => {
+    backupDebug('[RESTORE] START');
+    setBackupBusy(true);
+    setDocumentPickerLockSuppressed(true);
+    try {
+      backupDebug('[RESTORE] picker opened');
+      const result = await DocumentPicker.getDocumentAsync({
+        type: '*/*',
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+      backupDebug('[RESTORE] picker result received');
+      if (result.canceled || !result.assets?.[0]) {
+        backupDebug('[RESTORE] picker cancelled');
+        return;
+      }
+      const selected = result.assets[0];
+      backupDebug('[RESTORE] selected file URI received');
+      if (!selected.name.toLowerCase().endsWith('.vault')) {
+        Alert.alert('Unable to restore backup.', 'Choose a .vault backup file.');
+        return;
+      }
+      const backupFile = new File(selected.uri);
+      if (!backupFile.exists || backupFile.size <= 0) {
+        Alert.alert('Backup is invalid or corrupted.');
+        return;
+      }
+      backupDebug('[RESTORE] file read started');
+      const serialized = await backupFile.text();
+      backupDebug('[RESTORE] file read completed');
+      setBackupData(serialized);
+      setBackupPassword('');
+      setBackupError('');
+      setBackupModal('import');
+      backupDebug('[RESTORE] password screen opened');
+      backupDebug('[RESTORE] navigation state: backup password prompt');
+    } catch {
+      backupDebug('[RESTORE] file read failed');
+      Alert.alert('Unable to restore backup.');
+    } finally {
+      setDocumentPickerLockSuppressed(false);
+      setBackupBusy(false);
+    }
+  };
+  const decryptBackup = async () => {
+    if (!backupData) return;
+    if (!backupPassword) {
+      setBackupError('Enter the backup password to continue.');
+      return;
+    }
+    setBackupBusy(true);
+    setBackupError('');
+    try {
+      backupDebug('[RESTORE] password submitted');
+      const decrypted = await decryptEncryptedBackup(backupData, backupPassword);
+      setPendingBackup(decrypted);
+      setBackupModal(null);
+      setBackupPassword('');
+      backupDebug('[RESTORE] restore confirmation opened, backup entries:', decrypted.entries.length);
+      backupDebug('[RESTORE] navigation state: restore confirmation');
+    } catch (error) {
+      backupDebug(
+        '[RESTORE] decrypt or validation failed:',
+        error instanceof BackupError ? error.code : 'unknown error',
+      );
+      if (error instanceof BackupError) {
+        setBackupError(
+          error.code === 'INCORRECT_PASSWORD'
+            ? 'Incorrect backup password.'
+            : error.code === 'INVALID_PAYLOAD'
+              ? 'Backup is invalid or corrupted.'
+              : 'Backup is invalid or corrupted.',
+        );
+      } else {
+        setBackupError('Unable to restore backup.');
+      }
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+  const restore = async (mode: 'replace' | 'merge') => {
+    if (!pendingBackup) return;
+    setBackupBusy(true);
+    try {
+      backupDebug('[RESTORE] persistence started');
+      const count = await restoreBackup(pendingBackup, mode);
+      backupDebug('[RESTORE] persistence completed');
+      setPendingBackup(null);
+      setBackupData(null);
+      showToast(
+        mode === 'replace'
+          ? `${count} ${count === 1 ? 'entry' : 'entries'} restored`
+          : `${count} new ${count === 1 ? 'entry' : 'entries'} merged`,
+      );
+      backupDebug('[RESTORE] navigation state: vault remains unlocked');
+      backupDebug('[RESTORE] COMPLETE');
+    } catch {
+      backupDebug('[RESTORE] persistence failed');
+      Alert.alert('Unable to restore backup.');
+    } finally {
+      setBackupBusy(false);
+    }
   };
   return (
     <ScreenBackground>
@@ -477,6 +699,26 @@ function SettingsScreen({ showToast }: { showToast: (message: string) => void })
           {showLockOptions ? <View style={styles.optionList}>{autoLockOptions.map((option) => <Pressable key={option.value} onPress={() => { void updateSettings({ autoLock: option.value }); setShowLockOptions(false); }} style={[styles.optionRow, { borderColor: colors.border }]}><Text style={styles.settingTitle}>{option.label}</Text>{settings.autoLock === option.value ? <Feather name="check" size={17} color={colors.primary} /> : null}</Pressable>)}</View> : null}
           <SettingRow icon="lock" title="Lock vault now" subtitle="Require authentication immediately" onPress={lock} />
         </GlassCard>
+        <Text style={styles.sectionTitle}>BACKUP & RESTORE</Text>
+        <GlassCard>
+          <SettingRow
+            icon="upload"
+            title="Export encrypted backup"
+            subtitle="Create a password-protected .vault file"
+            onPress={() => {
+              setBackupError('');
+              setBackupPassword('');
+              setBackupConfirm('');
+              setBackupModal('export');
+            }}
+          />
+          <SettingRow
+            icon="download"
+            title="Import encrypted backup"
+            subtitle="Restore from a .vault file on this device"
+            onPress={() => void chooseBackup()}
+          />
+        </GlassCard>
         <Text style={styles.sectionTitle}>APPEARANCE</Text>
         <GlassCard>
           <SettingRow icon="moon" title="Dark mode" subtitle="Always use the Vault Keeper dark theme" trailing={<Switch value trackColor={{ false: colors.secondary, true: '#5D8C35' }} thumbColor={colors.primary} onValueChange={() => showToast('Dark mode is always on for your security workspace')} />} />
@@ -487,10 +729,172 @@ function SettingsScreen({ showToast }: { showToast: (message: string) => void })
           <SettingRow icon="info" title="Privacy & security" subtitle="Your vault never leaves this device" />
         </GlassCard>
       </ScrollView>
+      <Modal
+        visible={backupModal === 'export'}
+        transparent
+        animationType="slide"
+        onRequestClose={resetBackupState}
+      >
+        <BackupModalLayout>
+          <GlassCard style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.cardTitle}>Export encrypted backup</Text>
+              <IconButton
+                icon="x"
+                label="Close export backup"
+                onPress={resetBackupState}
+              />
+            </View>
+            <Text style={[styles.cardCopy, { color: colors.mutedForeground }]}>
+              Create a dedicated password for this backup. You will need it to restore your vault after reinstalling Vault Keeper.
+            </Text>
+            <Field
+              label="BACKUP PASSWORD"
+              value={backupPassword}
+              onChangeText={setBackupPassword}
+              placeholder="At least 8 characters"
+              secure
+              autoCapitalize="none"
+            />
+            <Field
+              label="CONFIRM BACKUP PASSWORD"
+              value={backupConfirm}
+              onChangeText={setBackupConfirm}
+              placeholder="Enter it again"
+              secure
+              autoCapitalize="none"
+            />
+            {backupError ? <Text style={styles.errorText}>{backupError}</Text> : null}
+            <PrimaryButton
+              onPress={() => void exportBackup()}
+              icon="upload"
+            >
+              {backupBusy ? 'CREATING BACKUP…' : 'EXPORT BACKUP'}
+            </PrimaryButton>
+            <View style={styles.securityNote}>
+              <Feather name="lock" size={14} color={colors.primary} />
+              <Text style={[styles.securityNoteText, { color: colors.mutedForeground }]}>
+                Encrypted before it leaves the app
+              </Text>
+            </View>
+          </GlassCard>
+        </BackupModalLayout>
+      </Modal>
+      <Modal
+        visible={backupModal === 'import'}
+        transparent
+        animationType="slide"
+        onRequestClose={resetBackupState}
+      >
+        <BackupModalLayout>
+          <GlassCard style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.cardTitle}>Import encrypted backup</Text>
+              <IconButton
+                icon="x"
+                label="Close import backup"
+                onPress={resetBackupState}
+              />
+            </View>
+            <Text style={[styles.cardCopy, { color: colors.mutedForeground }]}>
+              Enter the backup password to verify and unlock this .vault file. Your current vault will not change until you confirm the restore.
+            </Text>
+            <Field
+              label="BACKUP PASSWORD"
+              value={backupPassword}
+              onChangeText={setBackupPassword}
+              placeholder="Enter backup password"
+              secure
+              autoCapitalize="none"
+            />
+            {backupError ? <Text style={styles.errorText}>{backupError}</Text> : null}
+            <PrimaryButton
+              onPress={() => void decryptBackup()}
+              icon="unlock"
+            >
+              {backupBusy ? 'VERIFYING BACKUP…' : 'VERIFY BACKUP'}
+            </PrimaryButton>
+          </GlassCard>
+        </BackupModalLayout>
+      </Modal>
+      <Modal
+        visible={Boolean(pendingBackup)}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          setPendingBackup(null);
+          setBackupData(null);
+        }}
+      >
+        <BackupModalLayout>
+          <GlassCard style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.cardTitle}>Restore vault</Text>
+              <IconButton
+                icon="x"
+                label="Close restore backup"
+                onPress={() => {
+                  setPendingBackup(null);
+                  setBackupData(null);
+                }}
+              />
+            </View>
+            <View style={styles.restoreSummary}>
+              <View style={[styles.settingIcon, { backgroundColor: colors.secondary }]}>
+                <Feather name="download" size={18} color={colors.primary} />
+              </View>
+              <View style={styles.settingCopy}>
+                <Text style={styles.settingTitle}>
+                  {pendingBackup?.entries.length ?? 0} password entries found
+                </Text>
+                <Text style={[styles.settingSubtitle, { color: colors.mutedForeground }]}>
+                  This will restore password entries from this backup.
+                </Text>
+              </View>
+            </View>
+            <PrimaryButton
+              onPress={() => void restore('replace')}
+              icon="refresh-cw"
+            >
+              {backupBusy ? 'RESTORING…' : 'REPLACE EXISTING VAULT'}
+            </PrimaryButton>
+            <PrimaryButton
+              onPress={() => void restore('merge')}
+              icon="plus"
+              secondary
+            >
+              MERGE WITH EXISTING VAULT
+            </PrimaryButton>
+            <Text style={[styles.restoreWarning, { color: colors.mutedForeground }]}>
+              Replace removes current entries after confirmation. Merge preserves existing entries and skips practical duplicates.
+            </Text>
+          </GlassCard>
+        </BackupModalLayout>
+      </Modal>
       <Modal visible={showChangePassword} transparent animationType="slide" onRequestClose={() => setShowChangePassword(false)}>
         <View style={styles.modalBackdrop}><GlassCard style={styles.modalCard}><View style={styles.modalHeader}><Text style={styles.cardTitle}>Change master password</Text><IconButton icon="x" label="Close change password" onPress={() => setShowChangePassword(false)} /></View><Text style={[styles.cardCopy, { color: colors.mutedForeground }]}>Your vault remains on this device while the unlock password changes.</Text><Field label="CURRENT PASSWORD" value={current} onChangeText={setCurrent} secure autoCapitalize="none" /><Field label="NEW PASSWORD" value={next} onChangeText={setNext} secure autoCapitalize="none" /><Field label="CONFIRM NEW PASSWORD" value={confirm} onChangeText={setConfirm} secure autoCapitalize="none" />{passwordError ? <Text style={styles.errorText}>{passwordError}</Text> : null}<PrimaryButton onPress={() => void submitChange()} icon="check">SAVE NEW PASSWORD</PrimaryButton></GlassCard></View>
       </Modal>
     </ScreenBackground>
+  );
+}
+
+function BackupModalLayout({ children }: { children: React.ReactNode }) {
+  const insets = useSafeAreaInsets();
+  return (
+    <KeyboardAwareScrollViewCompat
+      style={styles.modalScroll}
+      contentContainerStyle={[
+        styles.modalBackdrop,
+        {
+          paddingTop: insets.top + 12,
+          paddingBottom: insets.bottom + 12,
+        },
+      ]}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+    >
+      {children}
+    </KeyboardAwareScrollViewCompat>
   );
 }
 
@@ -607,13 +1011,6 @@ function MainApp() {
     resetLockTimer();
     return () => { if (lockTimer.current) clearTimeout(lockTimer.current); };
   }, [lock, settings.autoLock, unlocked]);
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', (state) => {
-      if (state !== 'active') lock();
-      else resetLockTimer();
-    });
-    return () => subscription.remove();
-  }, [lock, settings.autoLock, unlocked]);
   if (formMode) return <EntryFormScreen key={editingEntry?.id ?? 'new'} entry={editingEntry} initialPassword={prefillPassword} onBack={() => { setFormMode(null); setEditingEntry(undefined); setPrefillPassword(''); }} onSaved={() => { setFormMode(null); setEditingEntry(undefined); setPrefillPassword(''); }} showToast={showToast} />;
   return (
     <ScreenBackground onTouchStart={resetLockTimer}>
@@ -726,9 +1123,12 @@ const styles = StyleSheet.create({
   categoryChoice: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 9, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 5 },
   categoryChoiceText: { fontFamily: 'Inter_500Medium', fontSize: 11 },
   fieldActions: { flexDirection: 'row', gap: 6 },
-  modalBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.7)', padding: 12 },
-  modalCard: { maxHeight: '92%', marginBottom: 0 },
+  modalScroll: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)' },
+  modalBackdrop: { flexGrow: 1, justifyContent: 'flex-end', paddingHorizontal: 12 },
+  modalCard: { maxHeight: '100%', marginBottom: 0 },
   modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
+  restoreSummary: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 8 },
+  restoreWarning: { fontFamily: 'Inter_400Regular', fontSize: 11, lineHeight: 17, textAlign: 'center', marginTop: 14 },
   bottomNavWrap: { position: 'absolute', bottom: 0, left: 0, right: 0, overflow: 'hidden', borderTopWidth: 1, borderTopColor: '#2A4748', paddingTop: 8, backgroundColor: 'rgba(7,16,20,0.78)' },
   bottomNav: { flexDirection: 'row', justifyContent: 'space-around' },
   navItem: { alignItems: 'center', minWidth: 78, gap: 4 },
