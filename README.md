@@ -35,6 +35,11 @@ Vault Keeper is a modern password vault built with **React Native and Expo** via
       <br>
       <b>5. Settings</b>
     </td>
+    <td align="center">
+      <img src="ss/6.jpg" width="200">
+      <br>
+      <b>6. Backup & Restore</b>
+    </td>
   </tr>
 </table>
 
