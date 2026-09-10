@@ -38,7 +38,7 @@ Vault Keeper is a modern password vault built with **React Native and Expo** via
     <td align="center">
       <img src="ss/6.jpg" width="200">
       <br>
-      <b>6. Backup & Restore</b>
+      <b>6. Backup & Restore (v2 only)</b>
     </td>
   </tr>
 </table>
@@ -72,7 +72,7 @@ Vault Keeper is a modern password vault built with **React Native and Expo** via
 - Symbols
 - Password strength indicator
 
-### Backup and Restore
+### ⚙️ Backup and Restore
 
 - Take backup of saved passwords as .vault file extention
 - Restore backup using .vault file.
